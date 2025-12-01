@@ -19,11 +19,13 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x android/gradlew
-
-      - name: Build debug APK
-        run: android/gradlew assembleDebug
+      # Usa Gradle "vero", senza wrapper android/gradlew
+      - name: Build debug APK with Gradle
+        uses: gradle/gradle-build-action@v3
+        with:
+          gradle-version: 8.7
+          arguments: assembleDebug
+          build-root-directory: android
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
