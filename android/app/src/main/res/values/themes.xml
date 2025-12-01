@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Tema principale dell'app SpotLive Player -->
+    <style name="Theme.SpotLivePlayer" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+
+        <!-- Usiamo colori letterali per evitare di dipendere da altri file -->
+        <item name="colorPrimary">#6200EE</item>
+        <item name="colorPrimaryVariant">#3700B3</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+
+        <item name="colorSecondary">#03DAC5</item>
+        <item name="colorSecondaryVariant">#018786</item>
+        <item name="colorOnSecondary">#000000</item>
+
+        <!-- Sfondo di default della finestra -->
+        <item name="android:windowBackground">@android:color/black</item>
+
+        <!-- Nessuna action bar -->
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+
+    </style>
+
+</resources>
