@@ -17,6 +17,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import net.spotlive.player.MainActivity
+import net.spotlive.player.piattaforma.servizio
 
 /**
  * Sentinella nativa (dalla 1.0.5): scrive nel diario il motivo dell'avvio, lo schermo che si spegne o si
@@ -58,18 +59,31 @@ object Sentinella {
         }
         runCatching { androidx.core.content.ContextCompat.registerReceiver(c, r, f, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED) }
         runCatching {
-            val cm = c.getSystemService(ConnectivityManager::class.java)
-            cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+            val cm = servizio<ConnectivityManager>(c, Context.CONNECTIVITY_SERVICE)
+            val cb = object : ConnectivityManager.NetworkCallback() {
                 override fun onCapabilitiesChanged(n: Network, caps: NetworkCapabilities) {
-                    val ok = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                    val ok = caps.hasCapability(capacitaReteValida())
                     if (ok) reteTornata(c, if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) "Wi-Fi" else "altra rete")
                 }
                 override fun onLost(n: Network) { retePersa(c) }
-            })
+            }
+            // SVILUPPO-20261114-02: registerDefaultNetworkCallback da API 24; prima una richiesta "internet" (API 21).
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                cm.registerDefaultNetworkCallback(cb)
+            } else {
+                cm.registerNetworkCallback(
+                    NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build(), cb,
+                )
+            }
         }
         // Dopo l'accensione: se entro 60 s non c'è rete valida, prova a ricollegare.
         h.postDelayed({ if (reteOk != true) { if (persaDal == 0L) persaDal = SystemClock.elapsedRealtime(); Diario.evento(c, "rete: nessuna connessione 60 s dopo l'avvio"); ricollega(c) } }, 60_000L)
     }
+
+    /** NET_CAPABILITY_VALIDATED esiste da API 23: prima basta INTERNET. */
+    fun capacitaReteValida(): Int =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) NetworkCapabilities.NET_CAPABILITY_VALIDATED
+        else NetworkCapabilities.NET_CAPABILITY_INTERNET
 
     private fun livello(i: Intent): Int {
         val l = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
@@ -175,7 +189,7 @@ object Sentinella {
     private fun ricollega(c: Context) {
         if (reteOk == true) return
         tentativi++
-        val wm = c.getSystemService(WifiManager::class.java)
+        val wm = servizio<WifiManager>(c, Context.WIFI_SERVICE)
         val acceso = runCatching { wm.isWifiEnabled }.getOrDefault(true)
         if (!acceso) {
             val ok = GestoreDispositivo.proprietario(c) && runCatching { @Suppress("DEPRECATION") wm.setWifiEnabled(true) }.getOrDefault(false)
@@ -184,7 +198,7 @@ object Sentinella {
             @Suppress("DEPRECATION") val r = runCatching { wm.reconnect() }.getOrDefault(false)
             if (richiestaWifi == null) runCatching {
                 val cb = object : ConnectivityManager.NetworkCallback() {}
-                c.getSystemService(ConnectivityManager::class.java).requestNetwork(
+                servizio<ConnectivityManager>(c, Context.CONNECTIVITY_SERVICE).requestNetwork(
                     NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build(), cb,
                 )
@@ -198,7 +212,7 @@ object Sentinella {
     private fun rilasciaRichiesta(c: Context) {
         val cb = richiestaWifi ?: return
         richiestaWifi = null
-        runCatching { c.getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(cb) }
+        runCatching { servizio<ConnectivityManager>(c, Context.CONNECTIVITY_SERVICE).unregisterNetworkCallback(cb) }
     }
 
     fun riepilogo(): Map<String, Any?> = mapOf(

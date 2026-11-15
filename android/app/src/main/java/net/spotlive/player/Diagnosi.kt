@@ -27,14 +27,26 @@ object Diagnosi {
         else -> "errore WebView $codice"
     }
 
+    /** SVILUPPO-20261114-02: SpotLivePlayer/1.0.15-legacy (Android 5.1; API 22; WebView <pacchetto> <versione>). */
+    fun userAgentLegacy(): String {
+        val wv = net.spotlive.player.piattaforma.Variante.webView
+        val webView = if (wv == null) "WebView ?" else "WebView ${wv["pacchetto"]} ${wv["versione"]}"
+        return "SpotLivePlayer/${BuildConfig.VERSIONE_PLAYER} (Android ${android.os.Build.VERSION.RELEASE}; " +
+            "API ${android.os.Build.VERSION.SDK_INT}; $webView)"
+    }
+
     /** GET senza credenziali: codice HTTP o tipo di errore. Per l'API senza token 401 = server raggiungibile. */
     fun prova(url: String): String = try {
         val c = java.net.URL(url).openConnection() as javax.net.ssl.HttpsURLConnection
+        // SVILUPPO-20261114-02: nella legacy fiducia CA di sistema + ISRG (standard: null, nessun cambio).
+        net.spotlive.player.piattaforma.Tls.socketFactory()?.let { c.sslSocketFactory = it }
         try {
             c.connectTimeout = 8_000
             c.readTimeout = 8_000
             c.instanceFollowRedirects = false
             c.setRequestProperty("Accept", "*/*")
+            // Solo legacy: la versione della WebView resta nel log di accesso del server (se il proxy lo registra).
+            if (net.spotlive.player.piattaforma.Variante.legacy) c.setRequestProperty("User-Agent", userAgentLegacy())
             val code = c.responseCode
             when {
                 code == 401 && url.contains("/api/") -> "OK (401 senza token)"

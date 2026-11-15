@@ -17,6 +17,7 @@ import androidx.core.app.NotificationCompat
 import net.spotlive.player.MainActivity
 import net.spotlive.player.R
 import net.spotlive.player.aggiornamenti.AggiornatoreApk
+import net.spotlive.player.piattaforma.servizio
 
 /**
  * Servizio in primo piano che tiene il player sempre davanti a tutto:
@@ -106,7 +107,7 @@ class WatchdogServizio : Service() {
         if (Configurazione.pausaRestanteMs(this) > 0) { mancati = 0; salto("pausa manutenzione"); return }
         if (aggiornamentoInCorso()) { mancati = 0; salto("aggiornamento in corso"); return }
         if (rilancioInCorso) return
-        val pm = getSystemService(PowerManager::class.java)
+        val pm = servizio<PowerManager>(this, POWER_SERVICE)
         if (!pm.isInteractive) {
             mancati = 0
             // Schermo spento in orario di accensione (timeout, tasto, ecc.): dopo 20 s lo riaccende.
@@ -210,6 +211,8 @@ class WatchdogServizio : Service() {
     private fun aggiornaFinestrella() = Finestrella.aggiorna(this)
 
     private fun creaCanali() {
+        // SVILUPPO-20261114-02: i canali di notifica esistono da API 26 (prima non servono).
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = getSystemService(NotificationManager::class.java)
         val fisso =
             NotificationChannel(CANALE_ID, getString(R.string.canale_watchdog_nome), NotificationManager.IMPORTANCE_MIN)
@@ -250,11 +253,11 @@ class WatchdogServizio : Service() {
             .setFullScreenIntent(intentPlayer(2), true)
             .setAutoCancel(true)
             .build()
-        runCatching { getSystemService(NotificationManager::class.java).notify(ID_AVVISO, n) }
+        runCatching { servizio<NotificationManager>(this, NOTIFICATION_SERVICE).notify(ID_AVVISO, n) }
     }
 
     private fun togliAvviso() {
-        runCatching { getSystemService(NotificationManager::class.java).cancel(ID_AVVISO) }
+        runCatching { servizio<NotificationManager>(this, NOTIFICATION_SERVICE).cancel(ID_AVVISO) }
     }
 
     companion object {

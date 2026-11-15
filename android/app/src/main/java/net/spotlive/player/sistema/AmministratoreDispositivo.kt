@@ -12,6 +12,7 @@ import android.os.UserManager
 import android.provider.Settings
 import android.util.Log
 import net.spotlive.player.MainActivity
+import net.spotlive.player.piattaforma.servizio
 
 /**
  * Ricevitore "amministratore del dispositivo". È solo dichiarato: non fa nulla finché il
@@ -35,8 +36,11 @@ object GestoreDispositivo {
 
     fun componente(c: Context) = ComponentName(c, AmministratoreDispositivo::class.java)
 
+    // SVILUPPO-20261114-02: da API 23 identico alla 1.0.15, sotto per nome (Android 5.1).
+    private fun dpm(c: Context): DevicePolicyManager = servizio(c, Context.DEVICE_POLICY_SERVICE)
+
     fun proprietario(c: Context): Boolean =
-        runCatching { c.getSystemService(DevicePolicyManager::class.java).isDeviceOwnerApp(c.packageName) }
+        runCatching { dpm(c).isDeviceOwnerApp(c.packageName) }
             .getOrDefault(false)
 
     /**
@@ -47,7 +51,7 @@ object GestoreDispositivo {
      */
     fun configuraSeProprietario(c: Context) {
         if (!proprietario(c)) return
-        val dpm = c.getSystemService(DevicePolicyManager::class.java)
+        val dpm = dpm(c)
         val admin = componente(c)
         runCatching { dpm.setLockTaskPackages(admin, arrayOf(c.packageName)) }.onFailure { Log.w(TAG, "lockTask", it) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -80,7 +84,7 @@ object GestoreDispositivo {
     /** Riavvio del dispositivo (solo proprietario, Android 7+). */
     fun riavvia(c: Context): Boolean {
         if (!proprietario(c) || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false
-        c.getSystemService(DevicePolicyManager::class.java).reboot(componente(c))
+        dpm(c).reboot(componente(c))
         return true
     }
 
@@ -91,7 +95,7 @@ object GestoreDispositivo {
      */
     fun rimuoviProprietario(c: Context): Boolean {
         if (!proprietario(c)) return false
-        val dpm = c.getSystemService(DevicePolicyManager::class.java)
+        val dpm = dpm(c)
         val admin = componente(c)
         runCatching { dpm.clearPackagePersistentPreferredActivities(admin, c.packageName) }
         runCatching { dpm.setLockTaskPackages(admin, arrayOf()) }
@@ -112,7 +116,7 @@ object GestoreDispositivo {
     /** Spegnimento schermo "programmato": blocca lo schermo (lo schermo si spegne). */
     fun spegniSchermo(c: Context): Boolean {
         if (!proprietario(c)) return false
-        c.getSystemService(DevicePolicyManager::class.java).lockNow()
+        dpm(c).lockNow()
         return true
     }
 }

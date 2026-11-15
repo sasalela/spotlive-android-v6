@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.util.Log
 import net.spotlive.player.MainActivity
+import net.spotlive.player.piattaforma.servizio
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
@@ -139,7 +140,7 @@ object OrarioAccensione {
     /** Programma la sveglia al prossimo cambio (accensione o spegnimento). */
     fun programma(c: Context) {
         val app = c.applicationContext
-        val am = app.getSystemService(AlarmManager::class.java)
+        val am = servizio<AlarmManager>(app, Context.ALARM_SERVICE)
         val pi = PendingIntent.getBroadcast(
             app, 7301, Intent(app, OrarioRicevitore::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
@@ -156,7 +157,13 @@ object OrarioAccensione {
             } else {
                 am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, t, pi)
             }
-        }.onFailure { runCatching { am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, t, pi) } }
+        }.onFailure {
+            runCatching {
+                // SVILUPPO-20261114-02: setAndAllowWhileIdle esiste da API 23 (prima non c'è Doze).
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, t, pi)
+                else am.set(AlarmManager.RTC_WAKEUP, t, pi)
+            }
+        }
     }
 
     /** Riaccende lo schermo e riporta davanti il player (usato all'orario di accensione). */
@@ -164,7 +171,7 @@ object OrarioAccensione {
     fun svegliaSchermo(c: Context) {
         val app = c.applicationContext
         runCatching {
-            val pm = app.getSystemService(PowerManager::class.java)
+            val pm = servizio<PowerManager>(app, Context.POWER_SERVICE)
             pm.newWakeLock(
                 PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
                 "spotlive:accensione",
@@ -187,7 +194,7 @@ class OrarioRicevitore : BroadcastReceiver() {
         val s = OrarioAccensione.stato(c)
         Log.i("SpotLiveOrario", "sveglia: acceso=${s.acceso}")
         if (s.acceso) OrarioAccensione.svegliaSchermo(c)
-        else if (c.getSystemService(PowerManager::class.java).isInteractive) runCatching {
+        else if (servizio<PowerManager>(c, Context.POWER_SERVICE).isInteractive) runCatching {
             c.applicationContext.startActivity(
                 Intent(c.applicationContext, MainActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),

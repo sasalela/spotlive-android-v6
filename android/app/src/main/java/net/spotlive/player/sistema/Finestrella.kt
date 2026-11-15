@@ -3,9 +3,11 @@ package net.spotlive.player.sistema
 import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.os.Build
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import net.spotlive.player.piattaforma.servizio
 
 /**
  * Finestrella trasparente di 1 px sopra le altre app (serve il permesso "Mostra sopra altre app").
@@ -21,9 +23,20 @@ object Finestrella {
     var ultimoErrore: String? = null
         private set
 
+    // SVILUPPO-20261114-02: TYPE_APPLICATION_OVERLAY esiste da API 26; prima l'overlay è TYPE_PHONE.
+    fun tipoFinestra(): Int =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+
+    private fun wm(c: Context): WindowManager = servizio(c, Context.WINDOW_SERVICE)
+
     private fun parametri(tieniAcceso: Boolean) = WindowManager.LayoutParams(
         1, 1,
-        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+        tipoFinestra(),
         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
@@ -45,7 +58,7 @@ object Finestrella {
     fun aggiorna(c: Context) {
         val app = c.applicationContext
         val consentito = Configurazione.sopraAltreApp(app)
-        val wm = app.getSystemService(WindowManager::class.java)
+        val wm = wm(app)
         if (consentito && vista == null) {
             val tieni = deveTenereAcceso(app)
             val v = View(app).apply { setBackgroundColor(Color.TRANSPARENT) }
@@ -70,7 +83,7 @@ object Finestrella {
     @Synchronized
     fun togli(c: Context) {
         val v = vista ?: return
-        runCatching { c.applicationContext.getSystemService(WindowManager::class.java).removeView(v) }
+        runCatching { wm(c.applicationContext).removeView(v) }
         vista = null
         schermoAcceso = null
     }

@@ -55,6 +55,13 @@ object RegolaAggiornamento {
     }
 
     /**
+     * SVILUPPO-20261114-02: un APK "-legacy" (Taurus T3, Android 5.1) solo sulla variante legacy e viceversa.
+     * Si applica al versionName dell'istruzione (prima di decidere) e a quello reale dell'APK scaricato.
+     */
+    fun varianteCompatibile(versionName: String, variante: String): Boolean =
+        versionName.endsWith("-legacy") == (variante == "legacy")
+
+    /**
      * @param silenzioso true se l'installazione non chiede tocchi (proprietario del dispositivo, o Android 12+ e
      *        SpotLive installatore della versione attuale)
      * @param orarioNoto/accesoOra dagli orari di accensione dello schermo

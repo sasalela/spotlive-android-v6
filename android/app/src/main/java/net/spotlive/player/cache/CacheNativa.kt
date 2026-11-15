@@ -24,10 +24,11 @@ class CacheNativa(
 
     private val http: OkHttpClient =
         client
-            ?: OkHttpClient.Builder()
-                .connectTimeout(30, TimeUnit.SECONDS)
-                .readTimeout(120, TimeUnit.SECONDS)
-                .build()
+            ?: net.spotlive.player.piattaforma.Tls.applica( // SVILUPPO-20261114-02: standard = identità
+                OkHttpClient.Builder()
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(120, TimeUnit.SECONDS),
+            ).build()
 
     /** Quota indicativa per la risposta `spazio` (MB). */
     var quotaMb: Int = 2_000
