@@ -58,6 +58,34 @@ class RegolaAggiornamentoTest {
         assertEquals(Decisione.INSTALLA, d(ist(17), noto = false, acceso = true))
     }
 
+    // SVILUPPO-20261114-02: variante standard/legacy.
+    @Test
+    fun varianteCompatibile() {
+        assertTrue(RegolaAggiornamento.varianteCompatibile("1.0.15", "standard"))
+        assertFalse(RegolaAggiornamento.varianteCompatibile("1.0.15-legacy", "standard"))
+        assertTrue(RegolaAggiornamento.varianteCompatibile("1.0.15-legacy", "legacy"))
+        assertFalse(RegolaAggiornamento.varianteCompatibile("1.0.15", "legacy"))
+        // versionName assente ("?") vale come standard: la legacy lo rifiuta.
+        assertFalse(RegolaAggiornamento.varianteCompatibile("?", "legacy"))
+    }
+
+    @Test
+    fun leggeFileCanaleLegacy() {
+        val i = RegolaAggiornamento.leggi(
+            o("""{"versionCode":17,"versionName":"1.0.16-legacy","url":"spotlive-player-1.0.16-legacy.apk","sha256":"$sha","automatico":false}"""),
+            "https://h/aggiornamenti/android/legacy/versione-android.json", "canale", "legacy",
+        )!!
+        assertEquals("https://h/aggiornamenti/android/legacy/spotlive-player-1.0.16-legacy.apk", i.url)
+        assertEquals("legacy", i.canale)
+        assertTrue(RegolaAggiornamento.varianteCompatibile(i.versionName, "legacy"))
+        // "legacy" non è un canale salvabile dal server: un T30 non passa mai al percorso legacy.
+        assertFalse("legacy" in RegolaAggiornamento.CANALI)
+        val dalServer = RegolaAggiornamento.leggi(
+            o("""{"canale":"legacy","versionCode":17,"url":"a.apk","sha256":"$sha"}"""), "https://h/", "server",
+        )!!
+        assertEquals("stabile", dalServer.canale)
+    }
+
     @Test
     fun firma() {
         val s = setOf(cert)

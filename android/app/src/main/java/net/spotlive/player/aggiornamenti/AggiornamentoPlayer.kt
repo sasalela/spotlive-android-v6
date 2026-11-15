@@ -43,11 +43,16 @@ object AggiornatoreApk {
     private val inCorso = AtomicBoolean(false)
     private val json = Json { ignoreUnknownKeys = true }
 
+    // SVILUPPO-20261114-02: fiducia TLS della variante (standard = identità).
     private val client =
-        OkHttpClient.Builder()
-            .connectTimeout(6, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .build()
+        net.spotlive.player.piattaforma.Tls.applica(
+            OkHttpClient.Builder()
+                .connectTimeout(6, TimeUnit.SECONDS)
+                .readTimeout(60, TimeUnit.SECONDS),
+        ).build()
+
+    /** SVILUPPO-20261114-02: la legacy legge solo il proprio file statico (mai endpoint per dispositivo né storico). */
+    const val PERCORSO_LEGACY = "/aggiornamenti/android/legacy/versione-android.json"
 
     fun origine(): String? {
         val u = Uri.parse(BuildConfig.URL_PLAYER)
@@ -68,6 +73,10 @@ object AggiornatoreApk {
     /** null = il server dice che non c'è niente da fare per questo dispositivo. */
     fun leggiIstruzione(contesto: Context): IstruzioneAndroid? {
         val org = origine() ?: throw IllegalStateException("indirizzo aggiornamenti assente")
+        if (BuildConfig.VARIANTE == "legacy") {
+            return leggiFile("$org$PERCORSO_LEGACY", "canale", "legacy")?.copy(canale = "legacy")
+                ?: throw IllegalStateException("versione legacy non leggibile")
+        }
         val tok = token(contesto)
         if (tok != null) {
             val url = "$org/api/v1/player/aggiornamento?piattaforma=android&versionCode=${BuildConfig.VERSION_CODE}"
@@ -112,7 +121,8 @@ object AggiornatoreApk {
 
     /** Installazione senza tocchi: proprietario del dispositivo, oppure Android 12+ e SpotLive ha installato sé stessa. */
     fun silenzioso(contesto: Context): Boolean {
-        if (net.spotlive.player.sistema.GestoreDispositivo.proprietario(contesto)) return true
+        // SVILUPPO-20261114-02: installazione silenziosa da proprietario non verificata sotto API 23 → mai silenziosa.
+        if (net.spotlive.player.sistema.GestoreDispositivo.proprietario(contesto)) return Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return false
         return runCatching {
             contesto.packageManager.getInstallSourceInfo(contesto.packageName).installingPackageName == contesto.packageName
@@ -136,6 +146,11 @@ object AggiornatoreApk {
         )
         if (pub == null) return base + ("esito" to "non_necessario")
         base += mapOf("versionePubblicata" to pub.versionName, "codicePubblicato" to pub.versionCode, "fonte" to pub.fonte)
+        // SVILUPPO-20261114-02: mai un APK "-legacy" su una standard né viceversa (vale anche per l'istruzione da ponte).
+        if (!RegolaAggiornamento.varianteCompatibile(pub.versionName, BuildConfig.VARIANTE)) {
+            registra(app, "variante_diversa", "${pub.versionName} (${pub.versionCode}) non è per la variante ${BuildConfig.VARIANTE} (fonte ${pub.fonte})")
+            return base + ("esito" to "variante_diversa")
+        }
         val p = app.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         val chiaveAttesa = "attesa_${pub.versionCode}"
         val daQuando = p.getLong(chiaveAttesa, 0L).takeIf { it > 0 } ?: System.currentTimeMillis().also { p.edit().putLong(chiaveAttesa, it).apply() }
@@ -213,7 +228,7 @@ object AggiornatoreApk {
             file.delete()
             throw IllegalStateException("APK corrotto (sha256 diverso)")
         }
-        val (pacchetto, codice, certApk) = FirmaApk.archivio(contesto, file)
+        val (pacchetto, codice, certApk, nomeVersione) = FirmaApk.archivio(contesto, file)
         if (!RegolaAggiornamento.firmaValida(pacchetto, certApk, FirmaApk.installata(contesto), pub.certSha256)) {
             file.delete()
             throw IllegalStateException("APK rifiutato: firma o pacchetto non SpotLive")
@@ -221,6 +236,11 @@ object AggiornatoreApk {
         if (codice != pub.versionCode.toLong()) {
             file.delete()
             throw IllegalStateException("APK rifiutato: versionCode $codice diverso da ${pub.versionCode}")
+        }
+        // SVILUPPO-20261114-02: la variante si controlla sul versionName reale dell'APK, non su quello dichiarato.
+        if (!RegolaAggiornamento.varianteCompatibile(nomeVersione ?: "", BuildConfig.VARIANTE)) {
+            file.delete()
+            throw IllegalStateException("APK rifiutato: versionName $nomeVersione non è per la variante ${BuildConfig.VARIANTE}")
         }
         val installer = contesto.packageManager.packageInstaller
         val parametri = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
@@ -248,7 +268,7 @@ object AggiornatoreApk {
     fun registra(contesto: Context, esito: String, dettaglio: String) {
         val p = contesto.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         val uguale = p.getString("esito", null) == esito && p.getString("dettaglio", null) == dettaglio.take(200)
-        if (uguale && esito in setOf("attesa_tecnico", "ritorno_non_possibile", "permesso_richiesto")) return
+        if (uguale && esito in setOf("attesa_tecnico", "ritorno_non_possibile", "permesso_richiesto", "variante_diversa")) return
         p.edit()
             .putString("esito", esito)
             .putString("dettaglio", dettaglio.take(200))
@@ -270,15 +290,18 @@ object AggiornatoreApk {
     }
 }
 
+/** SVILUPPO-20261114-02: dati dell'APK scaricato (prima una Triple, ora anche il versionName). */
+data class InfoApk(val pacchetto: String?, val codice: Long, val certificati: Set<String>, val versionName: String?)
+
 /** Certificati di firma (SHA-256 esadecimale) dell'APK scaricato e dell'app installata. */
 object FirmaApk {
     @Suppress("DEPRECATION")
-    fun archivio(contesto: Context, file: File): Triple<String?, Long, Set<String>> {
+    fun archivio(contesto: Context, file: File): InfoApk {
         val pm = contesto.packageManager
         val flag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
-        val info = pm.getPackageArchiveInfo(file.absolutePath, flag) ?: return Triple(null, -1, emptySet())
+        val info = pm.getPackageArchiveInfo(file.absolutePath, flag) ?: return InfoApk(null, -1, emptySet(), null)
         val codice = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode else info.versionCode.toLong()
-        return Triple(info.packageName, codice, impronte(info))
+        return InfoApk(info.packageName, codice, impronte(info), info.versionName)
     }
 
     @Suppress("DEPRECATION")

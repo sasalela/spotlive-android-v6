@@ -31,6 +31,8 @@ import net.spotlive.player.MainActivity
 import net.spotlive.player.cache.CacheNativa
 import net.spotlive.player.piattaforma.ArchivioSicuro
 import net.spotlive.player.piattaforma.IstantaneaSchermo
+import net.spotlive.player.piattaforma.Variante
+import net.spotlive.player.piattaforma.servizio
 
 class PonteGestore(
     private val contesto: Context,
@@ -191,8 +193,7 @@ class PonteGestore(
                 Diario.evento(contesto, "assistenza da remoto: pausa di $minuti minuti, player dietro")
                 activity?.let { act ->
                     act.runOnUiThread {
-                        val am = act.getSystemService(ActivityManager::class.java)
-                        if (am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE) runCatching { act.stopLockTask() }
+                        if (inBloccoTask(act)) runCatching { act.stopLockTask() }
                         runCatching { act.moveTaskToBack(true) }
                     }
                 }
@@ -246,7 +247,7 @@ class PonteGestore(
 
     /** Memoria, batteria, rete e versione: va nel ping di telemetria (ogni 30 s). */
     private fun stato(): Map<String, Any?> {
-        val am = contesto.getSystemService(ActivityManager::class.java)
+        val am = servizio<ActivityManager>(contesto, Context.ACTIVITY_SERVICE)
         val mi = ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
         val rt = Runtime.getRuntime()
         val batteria = contesto.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
@@ -256,17 +257,26 @@ class PonteGestore(
             if (l >= 0 && sc > 0) l * 100 / sc else null
         }
         val inCarica = batteria?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0)?.let { it != 0 }
-        val cm = contesto.getSystemService(ConnectivityManager::class.java)
-        val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
-        val tipoRete = when {
-            caps == null -> "nessuna"
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellulare"
-            else -> "altra"
+        val cm = servizio<ConnectivityManager>(contesto, Context.CONNECTIVITY_SERVICE)
+        val tipoRete: String
+        val reteKbps: Int?
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+            tipoRete = when {
+                caps == null -> "nessuna"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellulare"
+                else -> "altra"
+            }
+            reteKbps = caps?.linkDownstreamBandwidthKbps
+        } else {
+            // SVILUPPO-20261114-02: activeNetwork esiste da API 23; sotto le stesse stringhe da NetworkInfo.
+            tipoRete = tipoReteDaInfo(cm)
+            reteKbps = null
         }
         val nativa = android.os.Debug.getNativeHeapAllocatedSize() / 1048576
-        return mapOf(
+        val base = mapOf(
             "versioneApp" to BuildConfig.VERSION_NAME,
             "codiceApp" to BuildConfig.VERSION_CODE,
             "android" to Build.VERSION.RELEASE,
@@ -279,7 +289,7 @@ class PonteGestore(
             "batteria" to livello,
             "inCarica" to inCarica,
             "rete" to tipoRete,
-            "reteKbps" to caps?.linkDownstreamBandwidthKbps,
+            "reteKbps" to reteKbps,
             "accesoDaMin" to SystemClock.elapsedRealtime() / 60000,
             "permessoInstallazione" to AggiornatoreApk.puoInstallare(contesto),
             "ultimoAggiornamento" to AggiornatoreApk.ultimo(contesto),
@@ -287,6 +297,41 @@ class PonteGestore(
             "luminosita" to runCatching { (contesto.applicationContext as net.spotlive.player.PlayerApplicazione).luminosita.stato() }.getOrNull(),
             "configurazione" to runCatching { net.spotlive.player.sistema.Configurazione.riepilogo(contesto) }.getOrNull(),
         )
+        if (!Variante.legacy) return base
+        // SVILUPPO-20261114-02, solo legacy: WebView, archivio e "Origini sconosciute" per la diagnosi del T3.
+        @Suppress("DEPRECATION")
+        val origini = runCatching {
+            android.provider.Settings.Secure.getInt(contesto.contentResolver, android.provider.Settings.Secure.INSTALL_NON_MARKET_APPS, 0) == 1
+        }.getOrNull()
+        return base + mapOf(
+            "variante" to BuildConfig.VARIANTE,
+            "webview" to Variante.webView,
+            "archivioCifrato" to Variante.archivioCifrato,
+            "originiSconosciute" to origini,
+        )
+    }
+
+    @Suppress("DEPRECATION")
+    private fun tipoReteDaInfo(cm: ConnectivityManager): String {
+        val info = cm.activeNetworkInfo
+        return when {
+            info == null || !info.isConnected -> "nessuna"
+            info.type == ConnectivityManager.TYPE_ETHERNET -> "ethernet"
+            info.type == ConnectivityManager.TYPE_WIFI -> "wifi"
+            info.type == ConnectivityManager.TYPE_MOBILE -> "cellulare"
+            else -> "altra"
+        }
+    }
+
+    // SVILUPPO-20261114-02: lockTaskModeState da API 23; sotto isInLockTaskMode (API 21).
+    private fun inBloccoTask(act: Activity): Boolean {
+        val am = servizio<ActivityManager>(act, Context.ACTIVITY_SERVICE)
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
+        } else {
+            @Suppress("DEPRECATION")
+            am.isInLockTaskMode
+        }
     }
 
     private fun aJson(v: Any?): JsonElement =
@@ -314,7 +359,7 @@ class PonteGestore(
         )
 
     private fun puoRiavviareDispositivo(): Boolean {
-        val dpm = contesto.getSystemService(DevicePolicyManager::class.java)
+        val dpm = servizio<DevicePolicyManager>(contesto, Context.DEVICE_POLICY_SERVICE)
         return dpm.isDeviceOwnerApp(contesto.packageName)
     }
 

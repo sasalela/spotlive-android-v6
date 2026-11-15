@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
+import net.spotlive.player.piattaforma.servizio
 import java.security.MessageDigest
 
 /**
@@ -22,11 +23,13 @@ object Configurazione {
     private const val HASH_PIN = "2e513a2ac1fd6fe59286fe7e82b408c9c0802147b5e9004d4bad258dfa980be3"
 
     /** "Mostra sopra altre app": permette di riportare il player in primo piano da sottofondo. */
-    fun sopraAltreApp(c: Context): Boolean = Settings.canDrawOverlays(c)
+    // SVILUPPO-20261114-02: sotto API 23 il permesso è concesso all'installazione e Doze non esiste.
+    fun sopraAltreApp(c: Context): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(c)
 
     /** "Batteria senza limiti": esenzione dall'ottimizzazione della batteria. */
     fun batteriaSenzaLimiti(c: Context): Boolean =
-        c.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(c.packageName)
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            servizio<PowerManager>(c, Context.POWER_SERVICE).isIgnoringBatteryOptimizations(c.packageName)
 
     /** Il player è l'app Home predefinita (il tasto Home riporta al player, parte da solo all'accensione). */
     fun appHome(c: Context): Boolean {
@@ -45,8 +48,10 @@ object Configurazione {
     fun notifiche(c: Context): Boolean =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             c.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-        } else {
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             c.getSystemService(NotificationManager::class.java).areNotificationsEnabled()
+        } else {
+            androidx.core.app.NotificationManagerCompat.from(c).areNotificationsEnabled()
         }
 
     fun installazioneApp(c: Context): Boolean =

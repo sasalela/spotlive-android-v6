@@ -10,19 +10,42 @@ android {
 
     defaultConfig {
         applicationId = "net.spotlive.player"
-        minSdk = 24
+        // SVILUPPO-20261114-02: minSdk per flavor (standard 24, legacy 22). versionCode/versionName invariati.
         targetSdk = 35
         versionCode = 16
         versionName = "1.0.15"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("String", "VERSIONE_PLAYER", "\"1.0.15\"")
         // URL del player web ospitato. 1.0.11: predefinito = produzione (mai più ponte demo per build senza -PurlPlayer).
-        // Si cambia senza toccare il codice: ./gradlew assembleDebug -PurlPlayer=https://…/player/
+        // Si cambia senza toccare il codice: ./gradlew assembleStandardDebug -PurlPlayer=https://…/player/
         buildConfigField(
             "String",
             "URL_PLAYER",
             "\"${(project.findProperty("urlPlayer") as String?)?.takeIf { it.startsWith("https://") } ?: "https://209-227-230-76.sslip.io/player/"}\"",
         )
+    }
+
+    // SVILUPPO-20261114-02: due varianti dello stesso pacchetto, stessa firma, stesso versionCode.
+    //   standard: T30 e tablet (Android 7+), sorgente e comportamento della 1.0.15.
+    //   legacy:   Taurus T3 (Android 5.1, API 22): archivio, fiducia TLS e aggiornamenti propri (docs/MODIFICHE-T3.md).
+    // Comandi: ./gradlew assembleStandardRelease / assembleLegacyRelease → app/build/outputs/apk/{standard,legacy}/release/
+    flavorDimensions += "piattaforma"
+    productFlavors {
+        create("standard") {
+            dimension = "piattaforma"
+            minSdk = 24
+            buildConfigField("String", "VARIANTE", "\"standard\"")
+            buildConfigField("int", "WEBVIEW_CHROME_MIN", "0")
+            buildConfigField("String", "VERSIONE_PLAYER", "\"1.0.15\"")
+        }
+        create("legacy") {
+            dimension = "piattaforma"
+            minSdk = 22
+            versionNameSuffix = "-legacy"
+            buildConfigField("String", "VARIANTE", "\"legacy\"")
+            // Chrome minimo della WebView per il player web (moduli ES): da confermare sul target del bundle web.
+            buildConfigField("int", "WEBVIEW_CHROME_MIN", "61")
+            buildConfigField("String", "VERSIONE_PLAYER", "\"1.0.15-legacy\"")
+        }
     }
 
     // Firma di rilascio: SOLO da variabili d'ambiente, niente segreti nel repository.
@@ -39,7 +62,7 @@ android {
                 storePassword = firmaPassword
                 keyAlias = System.getenv("SPOTLIVE_SIGNING_ALIAS") ?: "spotlive-release"
                 keyPassword = firmaPassword
-                enableV1Signing = true
+                enableV1Signing = true // indispensabile per la legacy: Android 5.1 verifica solo la v1
                 enableV2Signing = true
                 enableV3Signing = true
             }

@@ -35,7 +35,10 @@ class ApplicatoreLuminosita(
     private val esecutore = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "spotlive-luminosita").apply { isDaemon = true } }
     private val json = Json { ignoreUnknownKeys = true }
     private val prefs = contesto.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-    private val client = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS).build()
+    // SVILUPPO-20261114-02: fiducia TLS della variante (standard = identità).
+    private val client = net.spotlive.player.piattaforma.Tls.applica(
+        OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS),
+    ).build()
 
     @Volatile private var regola: RegolaLuminosita? = null
     @Volatile private var fuso: String = "Europe/Rome"

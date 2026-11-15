@@ -20,13 +20,17 @@ class PlayerApplicazione : Application() {
             getProcessName()
         } else {
             val pid = android.os.Process.myPid()
-            getSystemService(android.app.ActivityManager::class.java)?.runningAppProcesses?.firstOrNull { it.pid == pid }?.processName
+            // SVILUPPO-20261114-02: getSystemService(Class) solo da API 23 (helper Servizi.kt).
+            net.spotlive.player.piattaforma.servizio<android.app.ActivityManager?>(this, ACTIVITY_SERVICE)
+                ?.runningAppProcesses?.firstOrNull { it.pid == pid }?.processName
         }
         return nome == null || nome == packageName
     }
 
     override fun onCreate() {
         super.onCreate()
+        // SVILUPPO-20261114-02: fiducia TLS della variante (standard: nessun effetto) prima di ogni client HTTP.
+        net.spotlive.player.piattaforma.Tls.inizializza(this)
         cacheNativa = CacheNativa(this)
         archivioSicuro = ArchivioSicuro(this)
         ponteGestore = PonteGestore(this, cacheNativa, archivioSicuro)

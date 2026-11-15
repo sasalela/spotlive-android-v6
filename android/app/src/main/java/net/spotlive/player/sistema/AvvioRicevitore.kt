@@ -30,7 +30,8 @@ class AvvioRicevitore : BroadcastReceiver() {
         Finestrella.aggiorna(app)
         OrarioAccensione.programma(app)
         val servizio = {
-            runCatching { app.startForegroundService(Intent(app, WatchdogServizio::class.java)) }
+            // SVILUPPO-20261114-02: da API 26 chiama startForegroundService come prima, sotto startService.
+            runCatching { androidx.core.content.ContextCompat.startForegroundService(app, Intent(app, WatchdogServizio::class.java)) }
                 .onFailure { Diario.evento(app, "avvio: servizio non avviato ${it.javaClass.simpleName}") }
         }
         servizio()

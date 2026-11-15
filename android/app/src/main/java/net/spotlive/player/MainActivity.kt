@@ -123,6 +123,14 @@ class MainActivity : AppCompatActivity() {
             setShowWhenLocked(true)
             // Accende lo schermo all'avvio, ma non fuori orario (un riavvio dell'app non deve riaccenderlo).
             setTurnScreenOn(net.spotlive.player.sistema.OrarioAccensione.stato(this).acceso)
+        } else if (net.spotlive.player.piattaforma.Variante.legacy && Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            // SVILUPPO-20261114-02, solo legacy: showWhenLocked/turnScreenOn del manifest valgono da API 27.
+            @Suppress("DEPRECATION")
+            window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED)
+            if (net.spotlive.player.sistema.OrarioAccensione.stato(this).acceso) {
+                @Suppress("DEPRECATION")
+                window.addFlags(WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
+            }
         }
         // Una sola istanza del player: se ne esiste già una (es. aperta col tasto Home mentre l'altra
         // era in un'altra attività) la più vecchia si chiude, così non ci sono due WebView.
@@ -155,6 +163,8 @@ class MainActivity : AppCompatActivity() {
                 .build()
 
         webView = WebView(this)
+        // SVILUPPO-20261114-02, solo legacy: WebView troppo vecchia per il player web → riga fissa e Diario.
+        if (BuildConfig.WEBVIEW_CHROME_MIN > 0) diagnosiWebView()
         webView.setBackgroundColor(android.graphics.Color.BLACK)
         // Velo nero per gli orari di spegnimento (sopra la WebView, i tocchi passano al gesto nascosto).
         nero = android.view.View(this).apply {
@@ -251,6 +261,19 @@ class MainActivity : AppCompatActivity() {
                     segnalaErrore("${if (request.isForMainFrame) "pagina" else "API"}: ${Diagnosi.erroreWebView(codice)} $desc", request.url)
                 }
 
+                // SVILUPPO-20261114-02: sotto API 23 arriva solo questa callback (pagina principale).
+                // Da API 23 non fa nulla: lì l'errore lo segnala già la callback qui sopra.
+                @Suppress("OVERRIDE_DEPRECATION", "DEPRECATION")
+                override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
+                    super.onReceivedError(view, errorCode, description, failingUrl)
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                        segnalaErrore(
+                            "pagina: ${Diagnosi.erroreWebView(errorCode)} ${description ?: ""}",
+                            runCatching { android.net.Uri.parse(failingUrl) }.getOrNull(),
+                        )
+                    }
+                }
+
                 override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, risposta: WebResourceResponse) {
                     super.onReceivedHttpError(view, request, risposta)
                     if (!request.isForMainFrame && request.url?.path?.contains("/api/") != true) return
@@ -260,12 +283,19 @@ class MainActivity : AppCompatActivity() {
 
                 @SuppressLint("WebViewClientOnReceivedSslError")
                 override fun onReceivedSslError(view: WebView, handler: android.webkit.SslErrorHandler, error: android.net.http.SslError) {
+                    // SVILUPPO-20261114-02, solo legacy sotto API 24: certificato del pannello già verificato dal client nativo.
+                    if (BuildConfig.VARIANTE == "legacy" && Build.VERSION.SDK_INT < Build.VERSION_CODES.N && fiduciaLegacy(error)) {
+                        handler.proceed()
+                        return
+                    }
                     handler.cancel() // mai accettare certificati non validi
                     segnalaErrore("certificato: ${Diagnosi.erroreSsl(error.primaryError)}", runCatching { android.net.Uri.parse(error.url) }.getOrNull())
                 }
 
                 // Se il motore della pagina si chiude (poca memoria o crash) l'app non deve morire:
                 // si toglie la WebView e si riavvia il player pulito.
+                // SVILUPPO-20261114-02: callback e RenderProcessGoneDetail esistono da API 26.
+                @androidx.annotation.RequiresApi(Build.VERSION_CODES.O)
                 override fun onRenderProcessGone(
                     view: WebView,
                     detail: android.webkit.RenderProcessGoneDetail,
@@ -278,6 +308,8 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
+        // SVILUPPO-20261114-02, solo legacy sotto API 24: il client nativo verifica subito la foglia del pannello.
+        if (BuildConfig.VARIANTE == "legacy" && Build.VERSION.SDK_INT < Build.VERSION_CODES.N) verificaFogliaInSottofondo(null)
         webView.loadUrl(urlPlayer())
         injectPonteApi()
 
@@ -337,8 +369,16 @@ class MainActivity : AppCompatActivity() {
         startActivity(Intent(this, ConfigurazioneActivity::class.java).putExtra(ConfigurazioneActivity.EXTRA_AUTOMATICA, automatica))
     }
 
-    private fun inBlocco(): Boolean =
-        getSystemService(ActivityManager::class.java).lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
+    // SVILUPPO-20261114-02: lockTaskModeState da API 23; sotto isInLockTaskMode (API 21).
+    private fun inBlocco(): Boolean {
+        val am = net.spotlive.player.piattaforma.servizio<ActivityManager>(this, ACTIVITY_SERVICE)
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
+        } else {
+            @Suppress("DEPRECATION")
+            am.isInLockTaskMode
+        }
+    }
 
     /** Blocco sul player: automatico se proprietario del dispositivo, altrimenti solo se scelto (con conferma di Android). */
     private fun applicaBlocco() {
@@ -510,6 +550,8 @@ class MainActivity : AppCompatActivity() {
         Thread {
             val esito = runCatching {
                 val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                // SVILUPPO-20261114-02: fiducia legacy (CA di sistema + ISRG); nella standard socketFactory() è null.
+                net.spotlive.player.piattaforma.Tls.socketFactory()?.let { f -> (c as? javax.net.ssl.HttpsURLConnection)?.sslSocketFactory = f }
                 try {
                     c.connectTimeout = 10_000
                     c.readTimeout = 15_000
@@ -571,6 +613,79 @@ class MainActivity : AppCompatActivity() {
         val t = "$testo · $u".take(160)
         erroreCaricamento = t
         net.spotlive.player.sistema.Diario.evento(this, "errore caricamento: $t")
+    }
+
+    // ---------------- SVILUPPO-20261114-02: solo variante legacy (Android 5.1) ----------------
+
+    /** Riga fissa nel riquadro e nella striscia se la WebView è sotto la soglia (null = sufficiente o non nota). */
+    @Volatile private var avvisoWebView: String? = null
+    @Volatile private var verificaFogliaInCorso = false
+    @Volatile private var sslRifiutato = false
+    private var fogliaRiverificata: String? = null
+
+    private fun diagnosiWebView() {
+        runCatching {
+            val ua = runCatching { webView.settings.userAgentString }.getOrNull()
+            val chrome = DiagnosiLed.chromeDaUa(ua)
+            val p = runCatching { androidx.webkit.WebViewCompat.getCurrentWebViewPackage(this) }.getOrNull()
+            val pacchetto = p?.packageName ?: "?"
+            val versione = p?.versionName ?: "?"
+            val minimo = BuildConfig.WEBVIEW_CHROME_MIN
+            val basta = net.spotlive.player.piattaforma.WebViewLegacy.sufficiente(chrome, minimo)
+            net.spotlive.player.piattaforma.Variante.webView = mapOf(
+                "pacchetto" to pacchetto,
+                "versione" to versione,
+                "chrome" to chrome,
+                "sufficiente" to basta,
+            )
+            if (basta == false) {
+                avvisoWebView = "WebView $pacchetto $versione (Chrome ${net.spotlive.player.piattaforma.WebViewLegacy.chromePrincipale(chrome)}): " +
+                    "serve ≥ $minimo. Aggiornare “Android System WebView”"
+                net.spotlive.player.sistema.Diario.evento(this, "WebView troppo vecchia: $pacchetto $versione Chrome $chrome, serve ≥ $minimo")
+            } else {
+                net.spotlive.player.sistema.Diario.evento(this, "WebView $pacchetto $versione Chrome $chrome (soglia $minimo)")
+            }
+        }
+    }
+
+    /** Certificato della WebView rifiutato dalle CA di Android 5.1: accettato solo se è la foglia già verificata. */
+    private fun fiduciaLegacy(error: android.net.http.SslError): Boolean {
+        val w = net.spotlive.player.piattaforma.WebViewLegacy
+        val hostPlayer = runCatching { android.net.Uri.parse(BuildConfig.URL_PLAYER).host }.getOrNull()
+        val host = runCatching { android.net.Uri.parse(error.url).host }.getOrNull()
+        val errori = (w.SSL_NOTYETVALID..w.SSL_INVALID).filter { runCatching { error.hasError(it) }.getOrDefault(true) }.toSet()
+        // Chiave interna AOSP di SslCertificate: se manca la foglia è null e si rifiuta.
+        val der = runCatching { android.net.http.SslCertificate.saveState(error.certificate)?.getByteArray("x509-certificate") }.getOrNull()
+        val foglia = w.impronta(der)
+        val verificata = net.spotlive.player.piattaforma.Tls.fogliaVerificata(hostPlayer)
+        val ok = w.puoProcedere(true, error.primaryError, errori, host, hostPlayer, foglia, verificata)
+        if (ok) {
+            net.spotlive.player.sistema.Diario.evento(this, "certificato pannello accettato (foglia verificata dal client nativo)")
+        } else if (host != null && host.equals(hostPlayer, true) && error.primaryError == w.SSL_UNTRUSTED && foglia != null && foglia != verificata) {
+            // Foglia nuova (rinnovo) o non ancora verificata: una sola nuova verifica per foglia, poi si ricarica.
+            sslRifiutato = true
+            verificaFogliaInSottofondo(foglia)
+        }
+        return ok
+    }
+
+    private fun verificaFogliaInSottofondo(fogliaWebView: String?) {
+        if (verificaFogliaInCorso) return
+        if (fogliaWebView != null) {
+            if (fogliaRiverificata == fogliaWebView) return
+            fogliaRiverificata = fogliaWebView
+        }
+        val host = runCatching { android.net.Uri.parse(BuildConfig.URL_PLAYER).host }.getOrNull() ?: return
+        verificaFogliaInCorso = true
+        Thread {
+            val foglia = runCatching { net.spotlive.player.piattaforma.Tls.verificaFoglia(host) }.getOrNull()
+            verificaFogliaInCorso = false
+            net.spotlive.player.sistema.Diario.evento(applicationContext, "TLS legacy: foglia del pannello ${if (foglia != null) "verificata" else "NON verificata"}")
+            if (foglia != null && sslRifiutato) {
+                sslRifiutato = false
+                gestoreOrario.post { if (!isFinishing && !isDestroyed) runCatching { webView.reload() } }
+            }
+        }.apply { isDaemon = true; name = "spotlive-tls-foglia" }.start()
     }
 
     /** Ogni 30 s (solo col riquadro visibile): prova HTTPS nativa verso /player/ e l'API, senza token. */
@@ -644,9 +759,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun reteOk(): Boolean = runCatching {
-        val cm = getSystemService(android.net.ConnectivityManager::class.java)
-        cm.getNetworkCapabilities(cm.activeNetwork)
-            ?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+        val cm = net.spotlive.player.piattaforma.servizio<android.net.ConnectivityManager>(this, CONNECTIVITY_SERVICE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            cm.getNetworkCapabilities(cm.activeNetwork)
+                ?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+        } else {
+            // SVILUPPO-20261114-02: activeNetwork esiste da API 23.
+            @Suppress("DEPRECATION")
+            cm.activeNetworkInfo?.isConnected == true
+        }
     }.getOrDefault(false)
 
     /**
@@ -704,6 +825,7 @@ class MainActivity : AppCompatActivity() {
             else -> "Collegamento al server…"
         }
         rqStato.text = if (valido) base else buildString {
+            avvisoWebView?.let { append(it).append("\n") } // SVILUPPO-20261114-02, solo legacy
             append(base)
             erroreCaricamento?.let { append("\nErrore ").append(it) }
             append("\nOra dispositivo: ").append(Diagnosi.ora())
@@ -806,6 +928,7 @@ class MainActivity : AppCompatActivity() {
         val ua = runCatching { webView.settings.userAgentString }.getOrNull()
         val righe = mutableListOf<String>()
         righe += "v${BuildConfig.VERSION_NAME} A${Build.VERSION.RELEASE}/${Build.VERSION.SDK_INT} WV ${versioneWebView()} Chr ${DiagnosiLed.chromeDaUa(ua)}"
+        avvisoWebView?.let { righe += "! $it" } // SVILUPPO-20261114-02, solo legacy
         righe += "${Diagnosi.ora().substring(11, 19)} man pag ${d?.optString("man")?.ifBlank { "-" } ?: "?"} nat $manifestNativo cache ${if (stato?.optBoolean("cache") == true) "sì" else "no"}"
         righe += "live ${d?.optString("ws") ?: "?"} (${d?.optInt("wsN") ?: 0}x) SW ${if (stato?.optBoolean("sw") == true) "sì" else "no"} ${stato?.optString("vis") ?: ""}"
         righe += "pass ${d?.optString("pas")?.ifBlank { "-" } ?: "?"} ok ${d?.optInt("pasOk") ?: 0}"
