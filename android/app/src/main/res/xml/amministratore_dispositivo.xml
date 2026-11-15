@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Usato SOLO se il dispositivo viene configurato con SpotLive come proprietario (device owner, QR alla prima accensione). -->
+<device-admin>
+    <uses-policies>
+        <force-lock />
+    </uses-policies>
+</device-admin>

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SpotLive — demo ponte</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #111;
+        color: #eee;
+        font-family: system-ui, sans-serif;
+      }
+      main {
+        padding: 1.5rem;
+      }
+      pre {
+        background: #222;
+        padding: 1rem;
+        overflow: auto;
+        max-height: 40vh;
+      }
+      button {
+        margin: 0.25rem;
+        padding: 0.5rem 1rem;
+        font-size: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>SpotLive player (segnaposto)</h1>
+      <p id="stato">In attesa del ponte nativo…</p>
+      <div>
+        <button type="button" id="btn-info">info</button>
+        <button type="button" id="btn-capacita">capacità</button>
+        <button type="button" id="btn-istantanea">istantanea</button>
+        <button type="button" id="btn-spazio">spazio cache</button>
+      </div>
+      <pre id="log"></pre>
+    </main>
+    <script>
+      const logEl = document.getElementById("log");
+      const statoEl = document.getElementById("stato");
+
+      function scrivi(etichetta, dati) {
+        logEl.textContent =
+          etichetta + "\n" + JSON.stringify(dati, null, 2) + "\n\n" + logEl.textContent;
+      }
+
+      function richiedi(richiesta) {
+        if (!window.SpotlivePonte) {
+          throw new Error("SpotlivePonte non disponibile");
+        }
+        return window.SpotlivePonte.richiedi(richiesta);
+      }
+
+      function avvia() {
+        if (!window.SpotlivePonte) {
+          statoEl.textContent = "Ponte assente (aprire da WebView Android)";
+          return;
+        }
+        statoEl.textContent = "Ponte attivo";
+        try {
+          scrivi(
+            "info",
+            richiedi({
+              v: 1,
+              id: "demo-info",
+              porta: "piattaforma",
+              metodo: "info",
+              parametri: {},
+            }),
+          );
+        } catch (e) {
+          scrivi("errore", String(e));
+        }
+      }
+
+      document.getElementById("btn-info").onclick = () =>
+        scrivi(
+          "info",
+          richiedi({ v: 1, id: "d1", porta: "piattaforma", metodo: "info", parametri: {} }),
+        );
+      document.getElementById("btn-capacita").onclick = () =>
+        scrivi(
+          "capacita",
+          richiedi({ v: 1, id: "d2", porta: "piattaforma", metodo: "capacita", parametri: {} }),
+        );
+      document.getElementById("btn-istantanea").onclick = () =>
+        scrivi(
+          "istantanea",
+          richiedi({ v: 1, id: "d3", porta: "piattaforma", metodo: "istantanea", parametri: {} }),
+        );
+      document.getElementById("btn-spazio").onclick = () =>
+        scrivi(
+          "spazio",
+          richiedi({ v: 1, id: "d4", porta: "cache", metodo: "spazio", parametri: {} }),
+        );
+
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", avvia);
+      } else {
+        avvia();
+      }
+    </script>
+  </body>
+</html>
